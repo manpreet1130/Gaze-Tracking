@@ -33,21 +33,23 @@ def getROI(frame, image, landmarks, eye):
 	_, threshEye = cv2.threshold(grayEye, thresh, 255, cv2.THRESH_BINARY)
 	prepEye = preprocess(threshEye)
 	x, y = getIris(prepEye, roi)
-	
+	#text = str((x*left)/(width*100.0))
+	#cv2.putText(frame, text, (100, 100), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 2)
+	#print(height)
 	cv2.circle(frame, (x+left, y+top), 3, (0, 255, 0), -1)
 	
-	hori = (x*left)/(width*100.0)
-	verti = (y*top)/(height*100.0)
 	ear = eyeAspectRatio(region)
 	
-	return hori, verti, ear
+	return (x*left)/(width*100.0), (y*top)/(height*100.0), ear
 
 def getSize(eye, t):
 	height, width = eye.shape
 	_, thresh = cv2.threshold(eye, t, 255, cv2.THRESH_BINARY)
 	n_pixels = height*width
+	#print(n_pixels)
 	
 	black_pixels = n_pixels - cv2.countNonZero(thresh)
+	#print("->", black_pixels)
 	try:
 		ratio = black_pixels * 1.0 / n_pixels
 		return ratio
@@ -73,6 +75,7 @@ def calibrate(eye):
 def preprocess(image):
 	kernel = np.array([[0., 1., 0.], [1., 2., 1.], [0., 1., 0.]], dtype = np.uint8)
 	blur = cv2.bilateralFilter(image, 5, 10, 10)
+	#leftEroded = cv2.erode(leftBlur, kernel, iterations = 1) 
 	dilated = cv2.dilate(blur, kernel)
 	return cv2.bitwise_not(dilated)
 
@@ -81,7 +84,10 @@ def getIris(image, roi):
 	contours, _ = cv2.findContours(image, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 	all_contours = sorted(contours, key = cv2.contourArea, reverse = True)
 	margin = 5
-	
+	#return max_contour
+	#for contour in contours: 
+	#	cv2.drawContours(roi, contour, -1, (255, 0, 0), 2)
+	#cv2.drawContours(roi, max_contour, -1, (255, 0, 0), 2)
 	try:
 		max_contour = all_contours[0]
 		M = cv2.moments(max_contour)
@@ -89,6 +95,7 @@ def getIris(image, roi):
 		y = int(M['m01'] / M['m00'])
 		roi = cv2.cvtColor(image.copy(), cv2.COLOR_GRAY2BGR)
 		cv2.circle(roi, (x, y), 3, (0, 0, 255), -1)
+		#cv2.imshow("ROI", roi)
 		return x, y
 	except (IndexError, ZeroDivisionError):
 		return 0, 0
@@ -97,30 +104,14 @@ def getIris(image, roi):
 	
 def printText(frame, text):
 	width, height, _ = frame.shape
-	if text == "BLINK":
-		cv2.putText(frame, text, (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-		return 
 	cv2.putText(frame, text, (width // 2, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-
-def detect(frame, avgHori, avgVerti, avgEAR):
-	if avgEAR < 0.20:
-			printText(frame, "BLINK")
-		
-	if avgHori < 0.8:
-		printText(frame, "LEFT")
-	elif avgHori > 1.70:
-		printText(frame, "RIGHT")
-	elif avgVerti < 0.60:
-		printText(frame, "UP")
-	else:
-		printText(frame, "CENTER")
-
 
 if __name__ == "__main__":
 	cap = cv2.VideoCapture(0)
 	detector = dlib.get_frontal_face_detector()
 	predictor = dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")
-	margin = 7
+	total = 0
+	previousRatio = 1
 	while True:
 		retr, frame = cap.read()
 		frame = cv2.flip(frame, 1)
@@ -129,17 +120,34 @@ if __name__ == "__main__":
 			faces = detector(gray)
 		
 			landmarks = predictor(gray, faces[0])
+			#cv2.circle(frame, (landmarks.part(0).x, landmarks.part(1).y), 3, (255, 0, 0), -1)
 		except: 
 			continue
-			
+		margin = 7
 		Lhori, Lverti, Lear = getROI(frame, gray, landmarks, 0)
+		
 		Rhori, Rverti, Rear = getROI(frame, gray, landmarks, 1)
-		avgEAR = (Lear + Rear) / 2
 		
-		avgHori = (Lhori + Rhori) / 2
-		avgVerti = (Lverti + Rverti) / 2
+		avgEAR = (Lear + Rear) / 2.0
 		
-		detect(frame, avgHori, avgVerti, avgEAR)
+		avgHori = (Lhori + Rhori) / 2.0
+		avgVerti = (Lverti + Rverti) / 2.0
+		
+		if avgHori < 0.8:
+			printText(frame, "LEFT")
+		elif avgHori > 1.70:
+			printText(frame, "RIGHT")
+		elif avgVerti < 0.60:
+			printText(frame, "UP")
+		else:
+			printText(frame, "CENTER")
+		
+		if(avgEAR < 0.20):
+			if(previousRatio >= 0.20):
+				total += 1
+		previousRatio = avgEAR
+			
+		cv2.putText(frame, "Counter: " + str(total), (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
 		
 		cv2.imshow("Frame", frame)
 		
